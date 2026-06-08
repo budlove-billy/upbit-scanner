@@ -941,7 +941,7 @@ function toggleCond(k) {
 /* ── WebSocket 연결 ── */
 function connectWS() {
   setWsStatus('connecting');
-  fetch('https://api.upbit.com/v1/market/all?isDetails=false')
+  fetch('https://corsproxy.io/?url=' + encodeURIComponent('https://api.upbit.com/v1/market/all?isDetails=false'))
     .then(r => r.json())
     .then(markets => {
       const krwMarkets = markets.filter(m => m.market.startsWith('KRW-'));
@@ -996,17 +996,28 @@ function connectWS() {
         } catch(_) {}
       };
 
+      let wsFailCount = 0;
       ws.onclose = () => {
-        setWsStatus('error');
-        setTimeout(connectWS, 3000);
+        wsFailCount++;
+        if (wsFailCount >= 2) {
+          // WebSocket 2번 이상 실패 → REST 폴링 모드로 전환
+          setWsStatus('error');
+          startMockData();
+        } else {
+          setWsStatus('connecting');
+          setTimeout(connectWS, 3000);
+        }
       };
 
-      ws.onerror = () => setWsStatus('error');
+      ws.onerror = () => {
+        wsFailCount++;
+        setWsStatus('error');
+        if (wsFailCount >= 2) startMockData();
+      };
     })
     .catch(() => {
       setWsStatus('error');
-      // 오프라인이면 목업 데이터로 시작
-      startMockData();
+      startMockData(); // REST API + 폴링 모드로 전환
     });
 }
 
@@ -1350,11 +1361,15 @@ function sortBy(key) {
 }
 
 /* ── WS 상태 ── */
-function setWsStatus(s) {
+function setWsStatus(s, customLabel) {
   const dot = document.getElementById('wsDot');
   const lbl = document.getElementById('wsLabel');
   dot.className = 'ws-dot ' + s;
-  lbl.textContent = {connected:'실시간 연결', connecting:'연결 중...', error:'재연결 중'}[s] || s;
+  lbl.textContent = customLabel || {
+    connected:  'WebSocket 실시간',
+    connecting: '연결 중...',
+    error:      'REST 폴링 모드'
+  }[s] || s;
 }
 
 /* ── 토스트 알림 ── */
@@ -1368,8 +1383,11 @@ function showToast(c) {
   setTimeout(() => el.remove(), 4200);
 }
 
-/* ── 목업 데이터 — REST API로 실제 현재가 먼저 가져온 후 시뮬레이션 ── */
+/* ── REST API 폴링 모드 (WebSocket 불가 시) ── */
+let restModeStarted = false;
 function startMockData() {
+  if (restModeStarted) return; // 중복 실행 방지
+  restModeStarted = true;
   // WebSocket이 안 되더라도 REST API로 실제 현재가는 가져올 수 있음
   const markets = [
     'KRW-BTC','KRW-ETH','KRW-XRP','KRW-SOL','KRW-ADA','KRW-DOGE',
@@ -1389,7 +1407,7 @@ function startMockData() {
   };
 
   // REST API로 실제 현재가 요청
-  fetch('https://api.upbit.com/v1/ticker?markets=' + markets.join(','))
+  fetch('https://corsproxy.io/?url=' + encodeURIComponent('https://api.upbit.com/v1/ticker?markets=' + markets.join(',')))
     .then(r => r.json())
     .then(tickers => {
       tickers.forEach(t => {
@@ -1418,7 +1436,7 @@ function startMockData() {
       });
       document.getElementById('statTotal').textContent = tickers.length;
       setWsStatus('connected');
-      document.getElementById('wsLabel').textContent = '실시간 연결 (REST 폴링)';
+      setWsStatus('connected', 'REST 폴링 (3초)');
       renderTable();
     })
     .catch(() => {
@@ -1458,7 +1476,7 @@ function startMockData() {
   setInterval(() => {
     const codes = Object.keys(allCoins);
     if (codes.length === 0) return;
-    fetch('https://api.upbit.com/v1/ticker?markets=' + codes.join(','))
+    fetch('https://corsproxy.io/?url=' + encodeURIComponent('https://api.upbit.com/v1/ticker?markets=' + codes.join(',')))
       .then(r => r.json())
       .then(tickers => {
         tickers.forEach(t => {
